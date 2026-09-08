@@ -34,6 +34,10 @@ if [[ "$out" == *"USAGE:"* ]]; then pass "help contains USAGE"; else fail "help 
 if [[ "$out" == *"-m, --mode"* ]]; then pass "help documents short+long flags"; else fail "help documents short+long flags"; fi
 if [[ "$out" == *"hex"* && "$out" == *"base64"* && "$out" == *"token"* ]]; then pass "help documents hex/base64/token commands"; else fail "help documents hex/base64/token commands"; fi
 if [[ "$out" == *"v7"* ]]; then pass "help documents uuid v7"; else fail "help documents uuid v7"; fi
+if [[ "$out" == *"ulid"* ]]; then pass "help documents ulid command"; else fail "help documents ulid command"; fi
+if [[ "$out" == *"inspect"* ]]; then pass "help documents inspect command"; else fail "help documents inspect command"; fi
+if [[ "$out" == *"passphrase"* ]]; then pass "help documents passphrase mode"; else fail "help documents passphrase mode"; fi
+if [[ "$out" == *"--null"* && "$out" == *"--env"* ]]; then pass "help documents --null/--env"; else fail "help documents --null/--env"; fi
 
 "$GENID" >/dev/null 2>&1; rc=$?
 assert_eq "no-args exits 1" "$rc" "1"
@@ -107,6 +111,42 @@ assert_eq "password --count 4 produces 4 lines" "$n" "4"
 uniq_count=$("$GENID" password -s high -c 15 2>/dev/null | sort -u | wc -l | tr -d ' ')
 assert_eq "15 generated passwords are all unique" "$uniq_count" "15"
 
+p=$("$GENID" password --charset "abc123" -l 10 2>/dev/null)
+assert_match "--charset restricts output to the given characters" "$p" '^[abc123]{10}$'
+
+p=$("$GENID" password --charset "abcloIO01" -l 10 -A 2>/dev/null)
+assert_match "--charset combined with --no-ambiguous strips lookalikes from it too" "$p" '^[abc]{10}$'
+
+"$GENID" password --charset "" -l 10 >/dev/null 2>&1
+assert_eq "empty --charset errors" "$?" "1"
+
+# --- passphrase mode ---
+
+p=$("$GENID" password -m passphrase 2>/dev/null)
+assert_match "default passphrase is 5 lowercase words joined by -" "$p" '^[a-z]+(-[a-z]+){4}$'
+
+p=$("$GENID" password -m passphrase -w 3 -p _ 2>/dev/null)
+assert_match "passphrase --words 3 --phrase-sep _" "$p" '^[a-z]+(_[a-z]+){2}$'
+
+"$GENID" password -m passphrase -w 1 >/dev/null 2>&1
+assert_eq "passphrase --words 1 errors (need at least 2)" "$?" "1"
+
+"$GENID" password -m bogus >/dev/null 2>&1
+assert_eq "invalid password --mode errors" "$?" "1"
+
+errout=$("$GENID" password -m passphrase 2>&1 >/dev/null)
+if [[ "$errout" == *"wordlist="* && "$errout" == *"bits entropy"* ]]; then
+  pass "passphrase prints a wordlist-based entropy estimate"
+else
+  fail "passphrase prints a wordlist-based entropy estimate (got: $errout)"
+fi
+
+n=$("$GENID" password -m passphrase -c 4 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "passphrase --count 4 produces 4 lines" "$n" "4"
+
+"$GENID" password --charset "loIO01" -l 10 -A >/dev/null 2>&1
+assert_eq "--charset fully stripped by --no-ambiguous errors instead of silently breaking" "$?" "1"
+
 # ---------------------------------------------------------------------------
 section "uuid"
 # ---------------------------------------------------------------------------
@@ -137,6 +177,90 @@ assert_eq "unsupported uuid version (5) exits 1" "$?" "1"
 
 "$GENID" uuid -v 3 >/dev/null 2>&1
 assert_eq "unsupported uuid version (3) exits 1" "$?" "1"
+
+# ---------------------------------------------------------------------------
+section "ulid"
+# ---------------------------------------------------------------------------
+
+u=$("$GENID" ulid 2>/dev/null)
+assert_match "ulid is 26 Crockford-base32 chars" "$u" '^[0-9A-HJKMNP-TV-Z]{26}$'
+
+n=$("$GENID" ulid -c 6 2>/dev/null | wc -l | tr -d ' ')
+assert_eq "ulid --count 6 produces 6 lines" "$n" "6"
+
+uniq_count=$("$GENID" ulid -c 15 2>/dev/null | sort -u | wc -l | tr -d ' ')
+assert_eq "15 generated ulids are all unique" "$uniq_count" "15"
+
+"$GENID" ulid --foo >/dev/null 2>&1
+assert_eq "ulid --foo unknown option exits 1" "$?" "1"
+
+# ---------------------------------------------------------------------------
+section "inspect"
+# ---------------------------------------------------------------------------
+
+# NOTE: deliberately not re-parsing the printed date string back to an
+# epoch here (e.g. via `date -d`) -- that's GNU-only syntax and would fail
+# this same test on macOS CI (BSD date needs `-j -f`/`-r` instead). A
+# same-year check is portable everywhere and still catches gross decoding
+# bugs (wrong byte order, wrong scale, etc. would land far outside it).
+this_year=$(date -u +%Y)
+u7=$("$GENID" uuid -v 7 2>/dev/null)
+out=$("$GENID" inspect "$u7" 2>/dev/null); rc=$?
+assert_eq "inspect on a uuid v7 exits 0" "$rc" "0"
+if [[ "$out" == *"Format: UUID"* && "$out" == *"Version: 7"* ]]; then
+  pass "inspect identifies uuid v7 format/version"
+else
+  fail "inspect identifies uuid v7 format/version (got: $out)"
+fi
+if [[ "$out" == *"Timestamp: ${this_year}-"* ]]; then
+  pass "inspect's decoded uuid v7 timestamp falls in the current year"
+else
+  fail "inspect's decoded uuid v7 timestamp falls in the current year (got: $out)"
+fi
+
+u4=$("$GENID" uuid 2>/dev/null)
+out=$("$GENID" inspect "$u4" 2>/dev/null)
+if [[ "$out" == *"Version: 4"* && "$out" == *"not embedded"* ]]; then
+  pass "inspect reports no timestamp for uuid v4"
+else
+  fail "inspect reports no timestamp for uuid v4 (got: $out)"
+fi
+
+ulid_val=$("$GENID" ulid 2>/dev/null)
+out=$("$GENID" inspect "$ulid_val" 2>/dev/null); rc=$?
+assert_eq "inspect on a ulid exits 0" "$rc" "0"
+if [[ "$out" == *"Format: ULID"* ]]; then pass "inspect identifies ulid format"; else fail "inspect identifies ulid format (got: $out)"; fi
+
+out=$("$GENID" inspect "$(printf '%s' "$ulid_val" | tr 'A-Z' 'a-z')" 2>/dev/null)
+if [[ "$out" == *"Format: ULID"* ]]; then pass "inspect accepts lowercase ulid"; else fail "inspect accepts lowercase ulid (got: $out)"; fi
+
+"$GENID" inspect "not-a-real-id" >/dev/null 2>&1
+assert_eq "inspect on garbage input exits 1" "$?" "1"
+
+"$GENID" inspect >/dev/null 2>&1
+assert_eq "inspect with no argument exits 1" "$?" "1"
+
+# ---------------------------------------------------------------------------
+section "output modes (--null / --env)"
+# ---------------------------------------------------------------------------
+
+null_count=$("$GENID" token -c 3 -0 2>/dev/null | tr -cd '\0' | wc -c | tr -d ' ')
+assert_eq "token --null separates --count 3 output with 3 NUL bytes" "$null_count" "3"
+
+nl_count=$("$GENID" token -c 3 -0 2>/dev/null | tr -cd '\n' | wc -c | tr -d ' ')
+assert_eq "token --null output has no newlines" "$nl_count" "0"
+
+out=$("$GENID" token -E APP_KEY 2>/dev/null)
+assert_match "--env with count 1 prints NAME=value" "$out" '^APP_KEY=[A-Za-z0-9_-]{32}$'
+
+out=$("$GENID" hex -b 4 -E SALT -c 2 2>/dev/null)
+line_count=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
+assert_eq "--env with count 2 produces 2 lines" "$line_count" "2"
+if printf '%s\n' "$out" | grep -qE '^SALT_1=[0-9a-f]{8}$' && printf '%s\n' "$out" | grep -qE '^SALT_2=[0-9a-f]{8}$'; then
+  pass "--env with count > 1 numbers the names SALT_1/SALT_2"
+else
+  fail "--env with count > 1 numbers the names SALT_1/SALT_2 (got: $out)"
+fi
 
 # ---------------------------------------------------------------------------
 section "hex"
@@ -199,6 +323,12 @@ assert_eq "token -l 0 errors" "$?" "1"
 
 n=$("$GENID" token -c 5 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "token --count 5 produces 5 lines" "$n" "5"
+
+t=$("$GENID" token --charset "xyz" -l 12 2>/dev/null)
+assert_match "token --charset restricts output to the given characters" "$t" '^[xyz]{12}$'
+
+"$GENID" token --charset "" -l 12 >/dev/null 2>&1
+assert_eq "token empty --charset errors" "$?" "1"
 
 uniq_count=$("$GENID" token -c 10 2>/dev/null | sort -u | wc -l | tr -d ' ')
 assert_eq "10 generated tokens are all unique" "$uniq_count" "10"

@@ -26,6 +26,26 @@ chmod +x genid.sh
 
 <br>
 
+## ➜ Installation
+
+**User-level (no root required):**
+```bash
+mkdir -p ~/.local/bin && curl -sSL https://raw.githubusercontent.com/rjusm/genid/main/genid.sh -o ~/.local/bin/genid && chmod +x ~/.local/bin/genid
+```
+(Make sure `~/.local/bin` is on your `$PATH`.)
+
+**System-wide (requires sudo):**
+```bash
+curl -sSL https://raw.githubusercontent.com/rjusm/genid/main/genid.sh | sudo tee /usr/local/bin/genid >/dev/null && sudo chmod +x /usr/local/bin/genid
+```
+
+Or skip installing anything and just clone + run:
+```bash
+git clone https://github.com/rjusm/genid.git && cd genid && chmod +x genid.sh
+```
+
+<br>
+
 ## ➜ Usage
 
 ```bash

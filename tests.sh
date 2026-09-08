@@ -295,33 +295,47 @@ if [ "$max_count" -lt 100 ]; then pass "char distribution not wildly skewed (max
 section "fallback path (no openssl on PATH)"
 # ---------------------------------------------------------------------------
 
-FAKEBIN=$(mktemp -d)
-for b in bash od tr date awk basename sort uniq head wc grep fold cat cut base64; do
-  p=$(command -v "$b" 2>/dev/null) && ln -sf "$p" "$FAKEBIN/$b"
-done
+# Skipped on Windows/MSYS: this test isolates PATH down to a scratch dir
+# (env -i PATH="$FAKEBIN") to hide openssl, but MSYS's bash.exe needs
+# msys-2.0.dll discoverable via PATH to even start -- so a stripped-down
+# PATH breaks bash itself here ("error while loading shared libraries"),
+# independent of genid.sh. Linux/macOS don't resolve shared libs via PATH,
+# so the same fallback code path (openssl-less -> /dev/urandom) is still
+# fully exercised there.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo "  SKIP: fallback-path tests (bash.exe needs PATH to find its own DLL on Windows/MSYS)"
+    ;;
+  *)
+    FAKEBIN=$(mktemp -d)
+    for b in bash od tr date awk basename sort uniq head wc grep fold cat cut base64; do
+      p=$(command -v "$b" 2>/dev/null) && ln -sf "$p" "$FAKEBIN/$b"
+    done
 
-u=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" username -l 10 2>/dev/null)
-assert_match "fallback: username still well-formed" "$u" '^[A-Za-z0-9]{10}$'
+    u=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" username -l 10 2>/dev/null)
+    assert_match "fallback: username still well-formed" "$u" '^[A-Za-z0-9]{10}$'
 
-p=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" password -s high 2>/dev/null)
-assert_match "fallback: password still well-formed" "$p" '^.{20}$'
+    p=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" password -s high 2>/dev/null)
+    assert_match "fallback: password still well-formed" "$p" '^.{20}$'
 
-uid=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" uuid 2>/dev/null)
-assert_match "fallback: uuid v4 still well-formed" "$uid" '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    uid=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" uuid 2>/dev/null)
+    assert_match "fallback: uuid v4 still well-formed" "$uid" '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 
-uid7=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" uuid -v 7 2>/dev/null)
-assert_match "fallback: uuid v7 still well-formed" "$uid7" '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    uid7=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" uuid -v 7 2>/dev/null)
+    assert_match "fallback: uuid v7 still well-formed" "$uid7" '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
 
-hx=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" hex -b 12 2>/dev/null)
-assert_match "fallback: hex still well-formed" "$hx" '^[0-9a-f]{24}$'
+    hx=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" hex -b 12 2>/dev/null)
+    assert_match "fallback: hex still well-formed" "$hx" '^[0-9a-f]{24}$'
 
-b64=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" base64 -b 24 2>/dev/null)
-assert_match "fallback: base64 still well-formed" "$b64" '^[A-Za-z0-9+/]{32}$'
+    b64=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" base64 -b 24 2>/dev/null)
+    assert_match "fallback: base64 still well-formed" "$b64" '^[A-Za-z0-9+/]{32}$'
 
-tok=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" token -l 20 2>/dev/null)
-assert_match "fallback: token still well-formed" "$tok" '^[A-Za-z0-9_-]{20}$'
+    tok=$(env -i PATH="$FAKEBIN" HOME="$HOME" "$FAKEBIN/bash" "$GENID" token -l 20 2>/dev/null)
+    assert_match "fallback: token still well-formed" "$tok" '^[A-Za-z0-9_-]{20}$'
 
-rm -rf "$FAKEBIN"
+    rm -rf "$FAKEBIN"
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 section "performance regression guard (loose bound, not a benchmark)"

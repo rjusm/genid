@@ -61,21 +61,28 @@ need_arg() {
   [ "$2" -ge 2 ] || err "option '$1' requires a value"
 }
 
-# _safe_tr_delete_set RAW: sets _SAFE_SET_OUT to a `tr -d` SET1 argument
-# that deletes exactly the literal characters in RAW, with no range
-# interpretation. In a tr SET, a `-` between two other characters means
-# "range" (e.g. "3-7" would delete 3,4,5,6,7, not just the characters '3'
-# and '7' a caller of --exclude-chars actually asked for) -- but a `-` at
-# either end of the set is always literal, since a range needs a
-# character on both sides. So any `-` present is pulled out and moved to
-# the end, where it can only ever be read literally.
-_safe_tr_delete_set() {
-  local raw=$1 rest
-  rest=$(printf '%s' "$raw" | tr -d -- '-')
-  case "$raw" in
-    *-*) _SAFE_SET_OUT="${rest}-";;
-    *) _SAFE_SET_OUT=$rest;;
-  esac
+# _filter_out_chars STR EXCLUDE: sets _FILTERED_OUT to STR with every
+# character that literally appears in EXCLUDE removed. Deliberately pure
+# Bash, not `tr -d`: tr's SET1 argument is a small pattern language, not a
+# literal-character list -- a `-` between two characters means a range
+# ("3-7" deletes 3,4,5,6,7, not just '3' and '7'), and "[:digit:]"/
+# "[=x=]"-shaped substrings are POSIX bracket expressions, not 9-10
+# literal characters. A caller's --exclude-chars string could contain any
+# of these by coincidence and have it silently delete far more than the
+# literal characters they typed. Quoting "$ch" inside the case pattern
+# below matches it as a literal string, not a glob, however weird it is.
+_filter_out_chars() {
+  local str=$1 exclude=$2 out="" i=0 ch
+  local len=${#str}
+  while [ "$i" -lt "$len" ]; do
+    ch=${str:i:1}
+    case "$exclude" in
+      *"$ch"*) ;;
+      *) out="${out}${ch}";;
+    esac
+    i=$((i+1))
+  done
+  _FILTERED_OUT=$out
 }
 
 # ---------------------------------------------------------------------------
@@ -203,11 +210,21 @@ rand_index() {
 # _now_ms: sets _NOW_MS_OUT to the current Unix time in milliseconds. Uses a
 # real millisecond reading when `date` supports the GNU `%N` extension
 # (`date +%s%3N`, verified Linux/Git-Bash); falls back to second precision
-# + a random millisecond offset when it doesn't (stock macOS/BSD date has
+# (millisecond field always :000) when it doesn't (stock macOS/BSD date has
 # no portable sub-second field). The output is validated as exactly 13
 # digits -- an unsupported platform may silently echo the format string
 # back instead of erroring, so length/digit-shape is checked, not just
 # whether the command succeeded.
+#
+# The fallback deliberately does NOT fill the millisecond field with a
+# random value. A random-looking-but-fake sub-second reading would present
+# itself as real precision to anyone decoding it later (`genid inspect`
+# would print it as if it were the actual millisecond of generation), which
+# misrepresents the data. Truncating to the whole second is honest about
+# what's actually known here -- it doesn't help or hurt uniqueness or
+# cross-second ordering either way, since both are already carried by the
+# random tail bits (rand_a/rand_b for uuid v7, the two 40-bit random halves
+# for ulid), never by the millisecond field itself.
 _now_ms() {
   local candidate secs
   candidate=$(date +%s%3N 2>/dev/null || true)
@@ -222,8 +239,7 @@ _now_ms() {
     _NOW_MS_OUT=$candidate
   else
     secs=$(date -u +%s)
-    rand_index 1000
-    _NOW_MS_OUT=$(( secs * 1000 + _RAND_OUT ))
+    _NOW_MS_OUT=$(( secs * 1000 ))
   fi
 }
 
@@ -336,8 +352,8 @@ COMMANDS:
     Generate an RFC-shaped UUID.
     -v, --version 4|7         v4 = fully random (default). v7 = time-ordered:
                                millisecond timestamp (real ms where `date`
-                               supports it, else second-accuracy + random
-                               tail) + random tail -- good for sortable IDs /
+                               supports it, else truncated to the second)
+                               + random tail -- good for sortable IDs /
                                DB primary keys (see NOTES).
     -c, --count N                 How many to generate. (default: 1)
     -0, --null                    Separate --count output with NUL instead
@@ -406,11 +422,14 @@ NOTES:
     supports GNU's `%N` extension (Linux, Git Bash) -- verified via a strict
     13-digit/all-numeric check, since an unsupported `date` may silently
     echo the format string back rather than erroring. Where that's not
-    available (stock macOS/BSD date has no portable sub-second field), it
-    falls back to second-accuracy + a random millisecond offset. Either
-    way, ordering is always correct between different seconds; ordering
-    *within* the same second is only meaningful where a real reading was
-    available.
+    available (stock macOS/BSD date has no portable sub-second field), the
+    millisecond field is truncated to :000 rather than filled with a
+    random-looking value -- a fabricated sub-second reading would
+    misrepresent itself as real precision to anyone decoding it later
+    (`genid inspect`). Either way, ordering is always correct between
+    different seconds; ordering *within* the same second is never
+    meaningful either way (it's carried by the random tail bits, not the
+    millisecond field).
   - 'base64' subcommand uses the system 'base64' command if present
     (virtually always true on Linux/macOS/WSL), else falls back to
     'openssl rand -base64' if openssl is available.
@@ -600,10 +619,10 @@ cmd_password() {
   fi
 
   if [ -n "$exclude_chars" ]; then
-    _safe_tr_delete_set "$exclude_chars"
     local i
     for i in "${!classes[@]}"; do
-      classes[i]=$(printf '%s' "${classes[i]}" | tr -d -- "$_SAFE_SET_OUT")
+      _filter_out_chars "${classes[i]}" "$exclude_chars"
+      classes[i]=$_FILTERED_OUT
     done
   fi
 
@@ -694,10 +713,11 @@ uuid_v7() {
   # RFC 9562 UUIDv7: 48-bit unix_ts_ms, 4-bit version, 12-bit rand_a,
   # 2-bit variant, 62-bit rand_b. The timestamp comes from _now_ms: a real
   # millisecond reading where `date` supports it (GNU/Linux, Git Bash),
-  # otherwise second-accuracy + a random millisecond offset (stock
-  # macOS/BSD date). So: ordering is always correct between UUIDs from
-  # different seconds; ordering *within* the same second is only
-  # meaningful on platforms where _now_ms got a real reading.
+  # otherwise truncated to the second (stock macOS/BSD date) -- see the
+  # _now_ms comment for why that's :000 rather than a random offset.
+  # Ordering is always correct between UUIDs from different seconds;
+  # ordering *within* the same second is never meaningful (uniqueness and
+  # any apparent ordering there comes from rand_a/rand_b, not this field).
   _now_ms
   local ms=$_NOW_MS_OUT
 
@@ -776,7 +796,7 @@ _crockford_b32() {
 # ulid_generate: sets _ULID_OUT to one ULID (26 Crockford-base32 chars: 10
 # for the 48-bit millisecond timestamp, 16 for 80 bits of randomness).
 # Timestamp source is the same _now_ms used by uuid_v7 -- real milliseconds
-# where `date` supports it, second-precision + random tail otherwise.
+# where `date` supports it, truncated to the second (:000) otherwise.
 ulid_generate() {
   _now_ms
   _crockford_b32 "$_NOW_MS_OUT" 10
@@ -960,8 +980,8 @@ cmd_token() {
     err "--charset must not be empty"
   fi
   if [ -n "$exclude_chars" ]; then
-    _safe_tr_delete_set "$exclude_chars"
-    charset=$(printf '%s' "$charset" | tr -d -- "$_SAFE_SET_OUT")
+    _filter_out_chars "$charset" "$exclude_chars"
+    charset=$_FILTERED_OUT
     [ -n "$charset" ] || err "--exclude-chars removed every character from the charset"
   fi
   require_pos_int "--length" "$length"

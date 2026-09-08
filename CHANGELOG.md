@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- `-X`/`--exclude-chars` with a `-` in the middle of the set (e.g. `"3-7"`)
+  was still read by `tr` as a *range*, deleting 3,4,5,6,7 instead of the
+  two literal characters requested, even after the previous leading-dash
+  fix. A follow-up review found `tr`'s SET1 argument has the same problem
+  for bracket expressions too (`"[:digit:]"`/`"[=x=]"` are POSIX
+  character/equivalence classes, not 9-10 literal characters), so `tr`
+  was dropped from `--exclude-chars` entirely in favor of a small
+  pure-Bash literal-character filter.
+- **(honesty, not a functional bug)** On a `date` without the GNU `%N`
+  extension (stock macOS/BSD), `uuid -v 7`/`ulid` filled the unavailable
+  millisecond field with a *random* value instead of leaving it at the
+  precision actually available. That random value looked like a real
+  sub-second reading, and `genid inspect` would report it as if it were
+  one -- misrepresenting fabricated data as real. The fallback now
+  truncates to the second (`:000`) instead; this doesn't affect
+  uniqueness or cross-second ordering, both of which were always carried
+  by the random tail bits, never by the millisecond field.
+
+  Both findings came from a follow-up independent code review, and are
+  now covered by regression tests.
+
 ## [1.0.1] - 2026-09-08
 
 ### Added

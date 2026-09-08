@@ -155,6 +155,15 @@ assert_match "password --length 010 is read as decimal 10, not octal 8" "$p" '^.
 p=$("$GENID" password --charset '-n' -l 10 -A 2>/dev/null)
 assert_match "--charset '-n' with --no-ambiguous doesn't get swallowed by echo" "$p" '^[-n]{10}$'
 
+# regression: --exclude-chars must treat tr(1) bracket-expression syntax
+# ("[:digit:]", "[=x=]") as literal characters, not POSIX character
+# classes/equivalence classes -- found by an independent code review
+p=$("$GENID" password --charset "0123456789abc" --exclude-chars "[:digit:]" -l 20 2>/dev/null)
+assert_match "--exclude-chars '[:digit:]' is 9 literal chars, not the digit class" "$p" '^[0-9abc]{20}$'
+
+p=$("$GENID" password --charset "abcxyz=" --exclude-chars "[=x=]" -l 20 2>/dev/null)
+assert_match "--exclude-chars '[=x=]' is literal chars, not an equivalence class" "$p" '^[abcyz]{20}$'
+
 # --- passphrase mode ---
 
 p=$("$GENID" password -m passphrase 2>/dev/null)
@@ -212,6 +221,40 @@ assert_eq "unsupported uuid version (5) exits 1" "$?" "1"
 
 "$GENID" uuid -v 3 >/dev/null 2>&1
 assert_eq "unsupported uuid version (3) exits 1" "$?" "1"
+
+# regression: on a `date` without the GNU %N extension (stock macOS/BSD),
+# _now_ms must truncate to the second (:000), not fabricate a
+# random-looking millisecond that `inspect` would later present as real
+# sub-second precision -- found by an independent code review. Shadow
+# just `date` via a PATH prefix (not a full PATH replacement, which would
+# break bash.exe's own DLL lookup on Windows/MSYS -- see the fallback-path
+# section below) so `+%s%3N` looks unsupported while everything else,
+# including the real `date` for every other call, still resolves normally.
+REAL_DATE=$(command -v date)
+FAKE_DATE_DIR=$(mktemp -d)
+cat > "$FAKE_DATE_DIR/date" <<EOF
+#!/usr/bin/env bash
+case "\$1" in
+  +%s%3N) echo "not-a-real-ms-reading";;
+  *) exec "$REAL_DATE" "\$@";;
+esac
+EOF
+chmod +x "$FAKE_DATE_DIR/date"
+
+out=$(PATH="$FAKE_DATE_DIR:$PATH" "$GENID" uuid -v 7 2>/dev/null)
+stripped=$(printf '%s' "$out" | tr -d '-')
+ms=$((16#${stripped:0:12}))
+assert_eq "uuid v7 fallback (no %N) truncates ms to :000, doesn't fabricate one" "$((ms % 1000))" "0"
+
+ulid_out=$(PATH="$FAKE_DATE_DIR:$PATH" "$GENID" ulid 2>/dev/null)
+inspect_out=$(PATH="$FAKE_DATE_DIR:$PATH" "$GENID" inspect "$ulid_out" 2>/dev/null)
+if [[ "$inspect_out" == *".000 UTC"* ]]; then
+  pass "ulid fallback (no %N) truncates ms to :000, doesn't fabricate one"
+else
+  fail "ulid fallback (no %N) truncates ms to :000, doesn't fabricate one (got: $inspect_out)"
+fi
+
+rm -rf "$FAKE_DATE_DIR"
 
 # ---------------------------------------------------------------------------
 section "ulid"

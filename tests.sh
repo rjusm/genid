@@ -135,6 +135,26 @@ if [[ "$p" != *[-_]* ]]; then pass "--exclude-chars '-_' actually excludes - and
 "$GENID" password --exclude-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#\$%^&*()-_=+[]{}?" -s high >/dev/null 2>&1
 assert_eq "--exclude-chars emptying every class errors" "$?" "1"
 
+# regression: a '-' in the MIDDLE of --exclude-chars must be read as two
+# literal characters, not a tr range (found by an independent code review)
+p=$("$GENID" password --exclude-chars "3-7" -s high -l 3000 -q 2>/dev/null)
+if [[ "$p" == *4* && "$p" == *5* && "$p" == *6* && "$p" != *3* && "$p" != *7* ]]; then
+  pass "--exclude-chars '3-7' removes only 3 and 7, not the whole range"
+else
+  fail "--exclude-chars '3-7' removes only 3 and 7, not the whole range (4,5,6 must appear; 3,7 must not)"
+fi
+
+# regression: a leading-zero numeric flag must not be reinterpreted as
+# octal downstream (bash `$(( ))` treats "010" as 8, but validation
+# accepts it as decimal 10 -- found by an independent code review)
+p=$("$GENID" password --length 010 -q 2>/dev/null)
+assert_match "password --length 010 is read as decimal 10, not octal 8" "$p" '^.{10}$'
+
+# regression: a --charset that echo(1) would misread as its own flag
+# (e.g. "-n", "-ne") must still work once --no-ambiguous processes it
+p=$("$GENID" password --charset '-n' -l 10 -A 2>/dev/null)
+assert_match "--charset '-n' with --no-ambiguous doesn't get swallowed by echo" "$p" '^[-n]{10}$'
+
 # --- passphrase mode ---
 
 p=$("$GENID" password -m passphrase 2>/dev/null)
@@ -352,6 +372,9 @@ assert_match "token --exclude-chars '-_' actually excludes - and _" "$t" '^[A-Za
 "$GENID" token --charset "ab" --exclude-chars "ab" >/dev/null 2>&1
 assert_eq "token --exclude-chars emptying the whole charset errors" "$?" "1"
 
+t=$("$GENID" token --charset "0123456789" --exclude-chars "3-7" -l 2000 2>/dev/null | fold -w1 | sort -u | tr -d '\n')
+assert_eq "token --exclude-chars '3-7' removes only 3 and 7, not the whole range" "$t" "01245689"
+
 uniq_count=$("$GENID" token -c 10 2>/dev/null | sort -u | wc -l | tr -d ' ')
 assert_eq "10 generated tokens are all unique" "$uniq_count" "10"
 
@@ -362,6 +385,11 @@ assert_match "hex -l 10 produces exactly 10 hex chars" "$h" '^[0-9a-f]{10}$'
 
 h=$("$GENID" hex -l 5 2>/dev/null)
 assert_match "hex -l 5 (odd length) produces exactly 5 hex chars" "$h" '^[0-9a-f]{5}$'
+
+# regression: leading-zero numeric flags must be read as decimal, not
+# reinterpreted as octal by a later `$(( ))` (found by independent review)
+h=$("$GENID" hex --length 010 2>/dev/null)
+assert_match "hex --length 010 is read as decimal 10, not octal 8" "$h" '^[0-9a-f]{10}$'
 
 "$GENID" hex -b 4 -l 10 >/dev/null 2>&1
 assert_eq "hex -b and -l together errors (mutually exclusive)" "$?" "1"

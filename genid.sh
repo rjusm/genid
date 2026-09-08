@@ -61,6 +61,23 @@ need_arg() {
   [ "$2" -ge 2 ] || err "option '$1' requires a value"
 }
 
+# _safe_tr_delete_set RAW: sets _SAFE_SET_OUT to a `tr -d` SET1 argument
+# that deletes exactly the literal characters in RAW, with no range
+# interpretation. In a tr SET, a `-` between two other characters means
+# "range" (e.g. "3-7" would delete 3,4,5,6,7, not just the characters '3'
+# and '7' a caller of --exclude-chars actually asked for) -- but a `-` at
+# either end of the set is always literal, since a range needs a
+# character on both sides. So any `-` present is pulled out and moved to
+# the end, where it can only ever be read literally.
+_safe_tr_delete_set() {
+  local raw=$1 rest
+  rest=$(printf '%s' "$raw" | tr -d -- '-')
+  case "$raw" in
+    *-*) _SAFE_SET_OUT="${rest}-";;
+    *) _SAFE_SET_OUT=$rest;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # Output helpers, shared by every generator subcommand.
 #
@@ -439,6 +456,13 @@ cmd_username() {
   esac
   require_pos_int "--length" "$length"
   require_pos_int "--count" "$count"
+  # Force base-10: is_pos_int/require_pos_int only check the *string* shape
+  # (via `[ ]`, which is decimal-only), but `$(( ))` arithmetic elsewhere
+  # treats a leading zero as octal ("010" -> 8). Without this, a value that
+  # validation accepts as "10" could silently generate output for "8"
+  # wherever it later hits `$(( ))` instead of a `[ ]`-based loop bound.
+  length=$((10#$length))
+  count=$((10#$count))
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
 
@@ -500,11 +524,13 @@ cmd_password() {
     *) err "invalid --mode '$mode' (expected standard|passphrase)";;
   esac
   require_pos_int "--count" "$count"
+  count=$((10#$count))  # see the base-10 note in cmd_username
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
 
   if [ "$mode" = "passphrase" ]; then
     require_pos_int "--words" "$words"
+    words=$((10#$words))
     if [ "$words" -lt 2 ]; then
       err "--words must be at least 2 (got: '$words')"
     fi
@@ -545,6 +571,7 @@ cmd_password() {
     *) err "invalid --strength '$strength' (expected low|medium|high|paranoid)";;
   esac
   require_pos_int "--length" "$length"
+  length=$((10#$length))  # see the base-10 note in cmd_username
 
   local classes
   if [ -n "$custom_charset" ]; then
@@ -568,14 +595,15 @@ cmd_password() {
   if [ "$use_ambiguous" -eq 0 ]; then
     local i
     for i in "${!classes[@]}"; do
-      classes[i]=$(echo "${classes[i]}" | tr -d 'loIO01')
+      classes[i]=$(printf '%s' "${classes[i]}" | tr -d -- 'loIO01')
     done
   fi
 
   if [ -n "$exclude_chars" ]; then
+    _safe_tr_delete_set "$exclude_chars"
     local i
     for i in "${!classes[@]}"; do
-      classes[i]=$(printf '%s' "${classes[i]}" | tr -d -- "$exclude_chars")
+      classes[i]=$(printf '%s' "${classes[i]}" | tr -d -- "$_SAFE_SET_OUT")
     done
   fi
 
@@ -703,6 +731,7 @@ cmd_uuid() {
     esac
   done
   require_pos_int "--count" "$count"
+  count=$((10#$count))  # see the base-10 note in cmd_username
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
 
@@ -787,6 +816,7 @@ cmd_ulid() {
     esac
   done
   require_pos_int "--count" "$count"
+  count=$((10#$count))  # see the base-10 note in cmd_username
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
 
@@ -823,12 +853,15 @@ cmd_hex() {
     # covers it, then the output string is truncated to the exact length
     # below (matters for odd lengths, since 1 byte always yields 2 chars).
     require_pos_int "--length" "$length"
+    length=$((10#$length))  # see the base-10 note in cmd_username
     bytes=$(( (length + 1) / 2 ))
   else
     [ -n "$bytes" ] || err "--bytes or --length is required for 'hex'"
     require_pos_int "--bytes" "$bytes"
+    bytes=$((10#$bytes))
   fi
   require_pos_int "--count" "$count"
+  count=$((10#$count))
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
 
@@ -867,7 +900,9 @@ cmd_base64() {
   done
   [ -n "$bytes" ] || err "--bytes is required for 'base64'"
   require_pos_int "--bytes" "$bytes"
+  bytes=$((10#$bytes))  # see the base-10 note in cmd_username
   require_pos_int "--count" "$count"
+  count=$((10#$count))
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
 
@@ -925,11 +960,14 @@ cmd_token() {
     err "--charset must not be empty"
   fi
   if [ -n "$exclude_chars" ]; then
-    charset=$(printf '%s' "$charset" | tr -d -- "$exclude_chars")
+    _safe_tr_delete_set "$exclude_chars"
+    charset=$(printf '%s' "$charset" | tr -d -- "$_SAFE_SET_OUT")
     [ -n "$charset" ] || err "--exclude-chars removed every character from the charset"
   fi
   require_pos_int "--length" "$length"
+  length=$((10#$length))  # see the base-10 note in cmd_username
   require_pos_int "--count" "$count"
+  count=$((10#$count))
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
   local n i idx out

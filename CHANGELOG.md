@@ -41,6 +41,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `--exclude-chars` values starting with `-` (e.g. `"-_"`) were misread by
   `tr` as an option flag instead of the character set to delete; fixed by
   passing `--` before the set argument.
+- **(security-relevant)** A leading-zero numeric flag (e.g. `--length
+  010`) was validated as decimal ("10") but then silently reinterpreted
+  as octal (8) by `$(( ))` arithmetic at two generation sites (`password`
+  standard mode, `hex -l`) -- producing output *shorter* than requested
+  while the printed entropy estimate still claimed the requested length.
+  All numeric flags are now normalized to base-10 right after validation.
+- `-X`/`--exclude-chars` with a `-` in the middle of the set (e.g. `"3-7"`)
+  was read by `tr` as a *range* (deleting 3,4,5,6,7) instead of the two
+  literal characters the flag is documented to remove -- silently
+  excluding far more of the charset than requested.
+- `-A`/`--no-ambiguous` used `echo` to pipe a class into `tr`, so a
+  `--charset` that echo(1) reads as its own flag (e.g. `"-n"`, `"-ne"`)
+  was swallowed into an empty string instead of processed, incorrectly
+  erroring with "character class is empty".
+
+  The three findings above came from an independent, out-of-context code
+  review of `genid.sh`/`tests.sh` -- all three are now covered by
+  regression tests.
 
 ## [1.0.0] - 2026-09-08
 

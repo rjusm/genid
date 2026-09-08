@@ -300,6 +300,10 @@ COMMANDS:
     -C, --charset STR          (standard mode) Use STR as the full character
                                set instead of --strength's classes. Overrides
                                --no-symbols.
+    -X, --exclude-chars STR    (standard mode) Remove every character in STR
+                               from whichever charset is active (default
+                               classes or --charset). Applied after
+                               --no-ambiguous.
     -w, --words N              (passphrase mode) Number of words. (default: 5)
     -p, --phrase-sep STR        (passphrase mode) Separator. (default: -)
     -q, --quiet                 Suppress the entropy estimate on stderr.
@@ -334,7 +338,11 @@ COMMANDS:
 
   hex [options]
     Generate random data as a hex string.
-    -b, --bytes N              Number of random bytes to generate. (required)
+    -b, --bytes N              Number of random bytes to generate.
+    -l, --length N             Output length in hex CHARACTERS instead of
+                               bytes (odd N still works: ceil(N/2) bytes are
+                               generated, then truncated to N chars).
+                               Exactly one of -b/-l is required.
     -c, --count N                 How many to generate. (default: 1)
     -0, --null                    Separate --count output with NUL instead
                                of newline.
@@ -354,6 +362,8 @@ COMMANDS:
     -l, --length N             Token length in characters. (default: 32)
     -C, --charset STR          Use STR as the character set instead of the
                                default URL-safe one.
+    -X, --exclude-chars STR    Remove every character in STR from the
+                               active charset.
     -c, --count N                 How many to generate. (default: 1)
     -0, --null                    Separate --count output with NUL instead
                                of newline.
@@ -465,7 +475,7 @@ cmd_username() {
 cmd_password() {
   local mode="standard"
   local strength="medium" length="" count=1 use_symbols=1 use_ambiguous=1 quiet=0
-  local custom_charset="" charset_given=0
+  local custom_charset="" charset_given=0 exclude_chars=""
   local words=5 phrase_sep="-" env_name=""
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -475,6 +485,7 @@ cmd_password() {
       -S|--no-symbols) use_symbols=0; shift;;
       -A|--no-ambiguous) use_ambiguous=0; shift;;
       -C|--charset) need_arg "$1" "$#"; custom_charset=$2; charset_given=1; shift 2;;
+      -X|--exclude-chars) need_arg "$1" "$#"; exclude_chars=$2; shift 2;;
       -w|--words) need_arg "$1" "$#"; words=$2; shift 2;;
       -p|--phrase-sep) need_arg "$1" "$#"; phrase_sep=$2; shift 2;;
       -q|--quiet) quiet=1; shift;;
@@ -561,9 +572,16 @@ cmd_password() {
     done
   fi
 
+  if [ -n "$exclude_chars" ]; then
+    local i
+    for i in "${!classes[@]}"; do
+      classes[i]=$(printf '%s' "${classes[i]}" | tr -d -- "$exclude_chars")
+    done
+  fi
+
   local c
   for c in "${classes[@]}"; do
-    [ -n "$c" ] || err "a character class is empty (charset too small once --no-ambiguous is applied)"
+    [ -n "$c" ] || err "a character class is empty (charset too small once --no-ambiguous/--exclude-chars is applied)"
   done
 
   local charset=""
@@ -786,18 +804,30 @@ cmd_ulid() {
 # ---------------------------------------------------------------------------
 
 cmd_hex() {
-  local bytes="" count=1 env_name=""
+  local bytes="" length="" count=1 env_name=""
   while [ $# -gt 0 ]; do
     case "$1" in
       -b|--bytes) need_arg "$1" "$#"; bytes=$2; shift 2;;
+      -l|--length) need_arg "$1" "$#"; length=$2; shift 2;;
       -0|--null) _NULL_SEP=1; shift;;
       -E|--env) need_arg "$1" "$#"; env_name=$2; shift 2;;
       -c|--count) need_arg "$1" "$#"; count=$2; shift 2;;
       *) err "unknown option for 'hex': $1";;
     esac
   done
-  [ -n "$bytes" ] || err "--bytes is required for 'hex'"
-  require_pos_int "--bytes" "$bytes"
+  if [ -n "$bytes" ] && [ -n "$length" ]; then
+    err "--bytes and --length are mutually exclusive for 'hex' (pick one unit)"
+  fi
+  if [ -n "$length" ]; then
+    # --length is in hex CHARACTERS, not bytes -- ceil(length/2) bytes
+    # covers it, then the output string is truncated to the exact length
+    # below (matters for odd lengths, since 1 byte always yields 2 chars).
+    require_pos_int "--length" "$length"
+    bytes=$(( (length + 1) / 2 ))
+  else
+    [ -n "$bytes" ] || err "--bytes or --length is required for 'hex'"
+    require_pos_int "--bytes" "$bytes"
+  fi
   require_pos_int "--count" "$count"
   _ENV_NAME=$env_name
   _ENV_TOTAL=$count
@@ -812,6 +842,9 @@ cmd_hex() {
       out="${out}${_RAND_HEX_OUT}"
       i=$((i+1))
     done
+    if [ -n "$length" ]; then
+      out=${out:0:length}
+    fi
     n=$((n+1))
     emit "$out" "$n"
   done
@@ -876,11 +909,12 @@ cmd_base64() {
 cmd_token() {
   local length=32 count=1 env_name=""
   local charset="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-  local charset_given=0
+  local charset_given=0 exclude_chars=""
   while [ $# -gt 0 ]; do
     case "$1" in
       -l|--length) need_arg "$1" "$#"; length=$2; shift 2;;
       -C|--charset) need_arg "$1" "$#"; charset=$2; charset_given=1; shift 2;;
+      -X|--exclude-chars) need_arg "$1" "$#"; exclude_chars=$2; shift 2;;
       -0|--null) _NULL_SEP=1; shift;;
       -E|--env) need_arg "$1" "$#"; env_name=$2; shift 2;;
       -c|--count) need_arg "$1" "$#"; count=$2; shift 2;;
@@ -889,6 +923,10 @@ cmd_token() {
   done
   if [ "$charset_given" -eq 1 ] && [ -z "$charset" ]; then
     err "--charset must not be empty"
+  fi
+  if [ -n "$exclude_chars" ]; then
+    charset=$(printf '%s' "$charset" | tr -d -- "$exclude_chars")
+    [ -n "$charset" ] || err "--exclude-chars removed every character from the charset"
   fi
   require_pos_int "--length" "$length"
   require_pos_int "--count" "$count"
@@ -933,8 +971,8 @@ cmd_inspect() {
   [ $# -ge 1 ] || err "'inspect' requires a value to decode"
   local value=$1 lower upper
 
-  lower=$(printf '%s' "$value" | tr 'A-Z' 'a-z')
-  upper=$(printf '%s' "$value" | tr 'a-z' 'A-Z')
+  lower=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+  upper=$(printf '%s' "$value" | tr '[:lower:]' '[:upper:]')
 
   if [ "${#lower}" -eq 36 ] \
     && [ "${lower:8:1}" = "-" ] && [ "${lower:13:1}" = "-" ] \

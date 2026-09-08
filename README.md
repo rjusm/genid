@@ -56,6 +56,7 @@ git clone https://github.com/rjusm/genid.git && cd genid && chmod +x genid.sh
 ./genid.sh password -s paranoid          # 32-char, full charset
 ./genid.sh password -s high -A -q        # 20-char, no ambiguous chars, no entropy line
 ./genid.sh password --charset "abc123" -l 10   # custom charset, e.g. for legacy systems
+./genid.sh password --exclude-chars "-_'\""    # drop chars that break shells/CSVs/etc.
 ./genid.sh password -m passphrase              # e.g. "tea-desert-fresh-sock-hinge"
 ./genid.sh password -m passphrase -w 6 -p _    # 6 words, underscore-separated
 
@@ -68,6 +69,7 @@ git clone https://github.com/rjusm/genid.git && cd genid && chmod +x genid.sh
 ./genid.sh inspect 018f3a1b-...          # decode a uuid v7 / ulid's embedded timestamp
 
 ./genid.sh hex -b 32                     # 32 random bytes as hex
+./genid.sh hex -l 10                     # 10 hex CHARACTERS (not bytes) -- e.g. for a short code
 ./genid.sh base64 -b 32                  # 32 random bytes as base64
 ./genid.sh token -l 64                   # 64-char URL-safe token (API keys, secrets)
 

@@ -120,6 +120,21 @@ assert_match "--charset combined with --no-ambiguous strips lookalikes from it t
 "$GENID" password --charset "" -l 10 >/dev/null 2>&1
 assert_eq "empty --charset errors" "$?" "1"
 
+p=$("$GENID" password --exclude-chars "aeiouAEIOU0123456789" -s high -l 20 2>/dev/null)
+if [[ "$p" != *[aeiouAEIOU0-9]* ]]; then
+  pass "--exclude-chars removes the given characters from every class"
+else
+  fail "--exclude-chars removes the given characters from every class (got: $p)"
+fi
+
+# regression: exclude-chars starting with '-' must not be misread as a tr flag
+p=$("$GENID" password --exclude-chars "-_" -s high -l 20 2>/dev/null); rc=$?
+assert_eq "--exclude-chars starting with '-' doesn't crash (tr flag confusion)" "$rc" "0"
+if [[ "$p" != *[-_]* ]]; then pass "--exclude-chars '-_' actually excludes - and _"; else fail "--exclude-chars '-_' actually excludes - and _ (got: $p)"; fi
+
+"$GENID" password --exclude-chars "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#\$%^&*()-_=+[]{}?" -s high >/dev/null 2>&1
+assert_eq "--exclude-chars emptying every class errors" "$?" "1"
+
 # --- passphrase mode ---
 
 p=$("$GENID" password -m passphrase 2>/dev/null)
@@ -231,7 +246,7 @@ out=$("$GENID" inspect "$ulid_val" 2>/dev/null); rc=$?
 assert_eq "inspect on a ulid exits 0" "$rc" "0"
 if [[ "$out" == *"Format: ULID"* ]]; then pass "inspect identifies ulid format"; else fail "inspect identifies ulid format (got: $out)"; fi
 
-out=$("$GENID" inspect "$(printf '%s' "$ulid_val" | tr 'A-Z' 'a-z')" 2>/dev/null)
+out=$("$GENID" inspect "$(printf '%s' "$ulid_val" | tr '[:upper:]' '[:lower:]')" 2>/dev/null)
 if [[ "$out" == *"Format: ULID"* ]]; then pass "inspect accepts lowercase ulid"; else fail "inspect accepts lowercase ulid (got: $out)"; fi
 
 "$GENID" inspect "not-a-real-id" >/dev/null 2>&1
@@ -330,8 +345,29 @@ assert_match "token --charset restricts output to the given characters" "$t" '^[
 "$GENID" token --charset "" -l 12 >/dev/null 2>&1
 assert_eq "token empty --charset errors" "$?" "1"
 
+t=$("$GENID" token --exclude-chars "-_" -l 20 2>/dev/null); rc=$?
+assert_eq "token --exclude-chars starting with '-' doesn't crash" "$rc" "0"
+assert_match "token --exclude-chars '-_' actually excludes - and _" "$t" '^[A-Za-z0-9]{20}$'
+
+"$GENID" token --charset "ab" --exclude-chars "ab" >/dev/null 2>&1
+assert_eq "token --exclude-chars emptying the whole charset errors" "$?" "1"
+
 uniq_count=$("$GENID" token -c 10 2>/dev/null | sort -u | wc -l | tr -d ' ')
 assert_eq "10 generated tokens are all unique" "$uniq_count" "10"
+
+# --- hex -l (length in hex chars, alternate unit to --bytes) ---
+
+h=$("$GENID" hex -l 10 2>/dev/null)
+assert_match "hex -l 10 produces exactly 10 hex chars" "$h" '^[0-9a-f]{10}$'
+
+h=$("$GENID" hex -l 5 2>/dev/null)
+assert_match "hex -l 5 (odd length) produces exactly 5 hex chars" "$h" '^[0-9a-f]{5}$'
+
+"$GENID" hex -b 4 -l 10 >/dev/null 2>&1
+assert_eq "hex -b and -l together errors (mutually exclusive)" "$?" "1"
+
+"$GENID" hex >/dev/null 2>&1
+assert_eq "hex with neither --bytes nor --length errors" "$?" "1"
 
 # ---------------------------------------------------------------------------
 section "input validation (edge cases from review)"

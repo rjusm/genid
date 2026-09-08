@@ -27,11 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `uuid -v 7` and `ulid` now use a real millisecond timestamp when `date`
   supports GNU's `%N` extension (Linux, Git Bash), instead of always
   padding second-accuracy with a random tail.
+- `-X`/`--exclude-chars` for `password` and `token`: removes arbitrary
+  characters from the active charset (default classes or `--charset`),
+  generalizing `--no-ambiguous` to any character set the caller picks.
+- `hex -l`/`--length`: length in hex characters as an alternative to
+  `-b`/`--bytes`, so callers don't have to do the bytes-to-chars math
+  themselves. The two are mutually exclusive.
 
 ### Fixed
 - `genid.bat` didn't propagate Git's `usr\bin`/`bin` onto `PATH` before
   invoking `bash.exe` directly, so `genid.sh` failed with "command not
   found" for `awk`/`cat`/`tr`/etc. on a plain `cmd.exe` PATH.
+- `--exclude-chars` values starting with `-` (e.g. `"-_"`) were misread by
+  `tr` as an option flag instead of the character set to delete; fixed by
+  passing `--` before the set argument.
 
 ## [1.0.0] - 2026-09-08
 

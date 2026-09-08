@@ -1,4 +1,7 @@
 <p align="center">
+  <a href="https://github.com/rjusm/genid/actions/workflows/ci.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/rjusm/genid/ci.yml?branch=main&style=for-the-badge&label=CI" alt="CI status">
+  </a>
   <img src="https://img.shields.io/badge/bash-3.2%2B-4EAA25?style=for-the-badge&logo=gnubash&logoColor=white" alt="Bash 3.2+">
   <img src="https://img.shields.io/badge/dependencies-none-black?style=for-the-badge" alt="No dependencies">
   <img src="https://img.shields.io/badge/license-MIT-black?style=for-the-badge" alt="MIT License">
